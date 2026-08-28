@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace TanqiuTft.Library;
 
-public sealed class LineupLibrary : IAsyncDisposable
+public sealed class LineupLibrary
 {
     public static string DefaultDirectoryPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
@@ -124,8 +124,6 @@ public sealed class LineupLibrary : IAsyncDisposable
         return lineups;
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new SqliteConnection(_connectionString);
@@ -160,7 +158,10 @@ public sealed class LineupLibrary : IAsyncDisposable
         {
             throw;
         }
-        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
+        catch (Exception exception) when (exception is ArgumentException
+            or FileFormatException
+            or InvalidOperationException
+            or NotSupportedException)
         {
             throw new LineupLibraryException(
                 "仅支持可正常打开的 PNG 或 JPG/JPEG 图片",

@@ -1,6 +1,4 @@
-using System.IO;
 using System.Windows;
-using System.Windows.Media.Imaging;
 
 namespace TanqiuTft.App;
 
@@ -9,11 +7,11 @@ public partial class ImportLineupDialog : Window
     public ImportLineupDialog(string imagePath)
     {
         InitializeComponent();
-        FileNameText.Text = Path.GetFileName(imagePath);
+        FileNameText.Text = System.IO.Path.GetFileName(imagePath);
 
         try
         {
-            PreviewImage.Source = LoadPreview(imagePath);
+            PreviewImage.Source = BitmapImageLoader.Load(imagePath);
         }
         catch
         {
@@ -48,14 +46,4 @@ public partial class ImportLineupDialog : Window
         DialogResult = false;
     }
 
-    private static BitmapImage LoadPreview(string imagePath)
-    {
-        var image = new BitmapImage();
-        image.BeginInit();
-        image.CacheOption = BitmapCacheOption.OnLoad;
-        image.UriSource = new Uri(imagePath, UriKind.Absolute);
-        image.EndInit();
-        image.Freeze();
-        return image;
-    }
 }

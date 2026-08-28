@@ -21,14 +21,12 @@ public sealed class LineupLibraryTests : IDisposable
         var libraryDirectory = Path.Combine(_temporaryDirectory, "library");
         await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
 
-        await using (var library = await LineupLibrary.OpenAsync(libraryDirectory))
-        {
-            await library.AddAsync("  测试阵容  ", sourceImagePath);
-        }
+        var library = await LineupLibrary.OpenAsync(libraryDirectory);
+        await library.AddAsync("  测试阵容  ", sourceImagePath);
 
         File.Delete(sourceImagePath);
 
-        await using var reopenedLibrary = await LineupLibrary.OpenAsync(libraryDirectory);
+        var reopenedLibrary = await LineupLibrary.OpenAsync(libraryDirectory);
         var lineup = Assert.Single(await reopenedLibrary.GetLineupsAsync());
 
         Assert.Equal("测试阵容", lineup.Name);
@@ -42,7 +40,7 @@ public sealed class LineupLibraryTests : IDisposable
         var sourceImagePath = Path.Combine(_temporaryDirectory, "fake.png");
         var libraryDirectory = Path.Combine(_temporaryDirectory, "library");
         await File.WriteAllTextAsync(sourceImagePath, "这不是图片");
-        await using var library = await LineupLibrary.OpenAsync(libraryDirectory);
+        var library = await LineupLibrary.OpenAsync(libraryDirectory);
 
         var exception = await Assert.ThrowsAsync<LineupLibraryException>(
             () => library.AddAsync("无效阵容", sourceImagePath));
@@ -53,13 +51,27 @@ public sealed class LineupLibraryTests : IDisposable
     }
 
     [Fact]
+    public async Task 导入文件结构损坏的PNG时显示清晰的中文格式错误()
+    {
+        Directory.CreateDirectory(_temporaryDirectory);
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "broken.png");
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng[..20]);
+        var library = await LineupLibrary.OpenAsync(Path.Combine(_temporaryDirectory, "library"));
+
+        var exception = await Assert.ThrowsAsync<LineupLibraryException>(
+            () => library.AddAsync("损坏图片", sourceImagePath));
+
+        Assert.Equal("仅支持可正常打开的 PNG 或 JPG/JPEG 图片", exception.Message);
+    }
+
+    [Fact]
     public async Task 阵容名称忽略首尾空格和英文大小写保持唯一且失败不留下内部图片()
     {
         Directory.CreateDirectory(_temporaryDirectory);
         var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
         var libraryDirectory = Path.Combine(_temporaryDirectory, "library");
         await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
-        await using var library = await LineupLibrary.OpenAsync(libraryDirectory);
+        var library = await LineupLibrary.OpenAsync(libraryDirectory);
         await library.AddAsync("Fast 8", sourceImagePath);
 
         var exception = await Assert.ThrowsAsync<LineupLibraryException>(
@@ -79,7 +91,7 @@ public sealed class LineupLibraryTests : IDisposable
         var jpegBytes = CreateJpeg();
         await File.WriteAllBytesAsync(pngPath, ValidPng);
         await File.WriteAllBytesAsync(jpegPath, jpegBytes);
-        await using var library = await LineupLibrary.OpenAsync(
+        var library = await LineupLibrary.OpenAsync(
             Path.Combine(_temporaryDirectory, "library"));
 
         await library.AddAsync("较早阵容", pngPath);

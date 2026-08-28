@@ -55,8 +55,7 @@
                      Foreground="{StaticResource TextBrush}"
                      Background="{StaticResource SurfaceRaisedBrush}"
                      BorderBrush="{StaticResource BorderBrush}"
-                     CaretBrush="{StaticResource TextBrush}"
-                     MaxLength="100" />
+                     CaretBrush="{StaticResource TextBrush}" />
             <TextBlock x:Name="FileNameText"
                        Margin="2,8,0,0"
                        Foreground="{StaticResource MutedTextBrush}"

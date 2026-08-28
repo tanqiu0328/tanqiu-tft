@@ -1,7 +1,5 @@
 using System.Collections.ObjectModel;
-using System.IO;
 using System.Windows;
-using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 using TanqiuTft.Library;
 
@@ -23,11 +21,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var configuredDirectory = Environment.GetEnvironmentVariable("TANQIU_TFT_LIBRARY_PATH");
-            var libraryDirectory = string.IsNullOrWhiteSpace(configuredDirectory)
-                ? LineupLibrary.DefaultDirectoryPath
-                : configuredDirectory;
-            _library = await LineupLibrary.OpenAsync(libraryDirectory);
+            _library = await LineupLibrary.OpenAsync(LineupLibrary.DefaultDirectoryPath);
             await ReloadAsync();
         }
         catch (Exception exception)
@@ -131,22 +125,11 @@ public partial class MainWindow : Window
         Lineups.Clear();
         foreach (var lineup in lineups)
         {
-            Lineups.Add(new LineupCardViewModel(lineup.Name, LoadImage(lineup.ImageBytes)));
+            Lineups.Add(new LineupCardViewModel(lineup.Name, BitmapImageLoader.Load(lineup.ImageBytes)));
         }
 
         CountText.Text = $"{Lineups.Count} 个阵容";
         EmptyState.Visibility = Lineups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private static BitmapImage LoadImage(byte[] imageBytes)
-    {
-        using var stream = new MemoryStream(imageBytes, writable: false);
-        var image = new BitmapImage();
-        image.BeginInit();
-        image.CacheOption = BitmapCacheOption.OnLoad;
-        image.StreamSource = stream;
-        image.EndInit();
-        image.Freeze();
-        return image;
-    }
 }
