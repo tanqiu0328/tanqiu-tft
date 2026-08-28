@@ -228,38 +228,50 @@ public partial class MainWindow : Window
             return;
         }
 
-        _reloadCancellation?.Cancel();
-        _reloadCancellation?.Dispose();
-        _reloadCancellation = new CancellationTokenSource();
-        var cancellationToken = _reloadCancellation.Token;
+        var currentCancellation = new CancellationTokenSource();
+        var previousCancellation = _reloadCancellation;
+        _reloadCancellation = currentCancellation;
+        previousCancellation?.Cancel();
+        var cancellationToken = currentCancellation.Token;
 
-        IReadOnlyList<Lineup> lineups;
         try
         {
-            lineups = _selectedTag is null
+            var lineups = _selectedTag is null
                 ? await _librarySession.ActiveLibrary.SearchAsync(SearchTextBox.Text, cancellationToken)
                 : await _librarySession.ActiveLibrary.GetLineupsByTagAsync(_selectedTag, cancellationToken);
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            Lineups.Clear();
+            foreach (var lineup in lineups)
+            {
+                Lineups.Add(new LineupCardViewModel(
+                    lineup.Name,
+                    BitmapImageLoader.Load(lineup.ImageBytes),
+                    lineup.Tags));
+            }
+
+            CountText.Text = $"{Lineups.Count} 个阵容";
+            EmptyState.Visibility = Lineups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            ActiveLibraryText.Text = _librarySession.ActiveDirectoryPath is null
+                ? string.Empty
+                : $"活动阵容库：{_librarySession.ActiveDirectoryPath}";
         }
         catch (OperationCanceledException)
         {
             return;
         }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        Lineups.Clear();
-        foreach (var lineup in lineups)
+        finally
         {
-            Lineups.Add(new LineupCardViewModel(
-                lineup.Name,
-                BitmapImageLoader.Load(lineup.ImageBytes),
-                lineup.Tags));
+            currentCancellation.Dispose();
+            if (ReferenceEquals(_reloadCancellation, currentCancellation))
+            {
+                _reloadCancellation = null;
+            }
         }
-
-        CountText.Text = $"{Lineups.Count} 个阵容";
-        EmptyState.Visibility = Lineups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        ActiveLibraryText.Text = _librarySession.ActiveDirectoryPath is null
-            ? string.Empty
-            : $"活动阵容库：{_librarySession.ActiveDirectoryPath}";
     }
 
     private async void SearchTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)

@@ -105,7 +105,7 @@ public sealed class LineupLibraryTests : IDisposable
     }
 
     [Fact]
-    public async Task 新增阵容时定阵Tag去除首尾空格并忽略英文大小写去重()
+    public async Task 新增阵容时_定阵_Tag_去除首尾空格并忽略英文大小写去重()
     {
         Directory.CreateDirectory(_temporaryDirectory);
         var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
@@ -125,7 +125,7 @@ public sealed class LineupLibraryTests : IDisposable
     }
 
     [Fact]
-    public async Task 修改阵容Tag后建议集合只保留仍被使用的Tag()
+    public async Task 修改阵容_定阵_Tag_后建议集合只保留仍被使用的_定阵_Tag()
     {
         Directory.CreateDirectory(_temporaryDirectory);
         var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
@@ -142,7 +142,7 @@ public sealed class LineupLibraryTests : IDisposable
     }
 
     [Fact]
-    public async Task 统一搜索按名称完整名称包含和Tag包含分级并在同级按新到旧排列()
+    public async Task 统一搜索按名称完整名称包含和_定阵_Tag_包含分级并在同级按新到旧排列()
     {
         Directory.CreateDirectory(_temporaryDirectory);
         var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
@@ -168,7 +168,7 @@ public sealed class LineupLibraryTests : IDisposable
     }
 
     [Fact]
-    public async Task 点击Tag筛选时只返回持有该完整Tag的阵容()
+    public async Task 点击_定阵_Tag_筛选时只返回持有该完整_定阵_Tag_的阵容()
     {
         Directory.CreateDirectory(_temporaryDirectory);
         var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
@@ -176,7 +176,7 @@ public sealed class LineupLibraryTests : IDisposable
         var library = await LineupLibrary.CreateAsync(Path.Combine(_temporaryDirectory, "library"));
         await library.AddAsync("护卫转名称", sourceImagePath, ["其他"]);
         await library.AddAsync("目标阵容", sourceImagePath, ["FAST 8"]);
-        await library.AddAsync("相似Tag阵容", sourceImagePath, ["Fast 8 进阶"]);
+        await library.AddAsync("相似定阵Tag阵容", sourceImagePath, ["Fast 8 进阶"]);
 
         var results = await library.GetLineupsByTagAsync("fast 8");
 
