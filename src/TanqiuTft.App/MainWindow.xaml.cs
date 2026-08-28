@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using Microsoft.Win32;
 using TanqiuTft.Library;
@@ -7,6 +9,7 @@ namespace TanqiuTft.App;
 
 public partial class MainWindow : Window
 {
+    private readonly LineupLibrarySession _librarySession = new();
     private LineupLibrary? _library;
 
     public MainWindow()
@@ -21,7 +24,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            _library = await LineupLibrary.OpenAsync(LineupLibrary.DefaultDirectoryPath);
+            if (!await SelectInitialLibraryAsync())
+            {
+                Close();
+                return;
+            }
+
+            _library = _librarySession.ActiveLibrary;
             await ReloadAsync();
         }
         catch (Exception exception)
@@ -33,6 +42,100 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Close();
+        }
+    }
+
+    private async Task<bool> SelectInitialLibraryAsync()
+    {
+        if (await _librarySession.TryRestoreAsync())
+        {
+            return true;
+        }
+
+        if (Directory.Exists(LineupLibrary.DefaultDirectoryPath))
+        {
+            try
+            {
+                await _librarySession.OpenAndActivateAsync(LineupLibrary.DefaultDirectoryPath);
+                return true;
+            }
+            catch (LineupLibraryException)
+            {
+                // 无效的默认目录交给启动选择页处理
+            }
+        }
+
+        while (true)
+        {
+            var dialog = new LibraryStartupDialog { Owner = this };
+            if (dialog.ShowDialog() != true)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (dialog.Choice == LibraryStartupChoice.CreateDefault)
+                {
+                    await _librarySession.CreateAndActivateAsync(LineupLibrary.DefaultDirectoryPath);
+                }
+                else
+                {
+                    await _librarySession.OpenAndActivateAsync(dialog.SelectedDirectoryPath!);
+                }
+
+                return true;
+            }
+            catch (Exception exception)
+            {
+                ShowLibraryError(exception);
+            }
+        }
+    }
+
+    private async void SwitchLibraryButton_Click(object sender, RoutedEventArgs e)
+    {
+        var folderDialog = new OpenFolderDialog
+        {
+            Title = "选择另一个阵容库",
+            Multiselect = false
+        };
+
+        if (folderDialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await _librarySession.OpenAndActivateAsync(folderDialog.FolderName);
+            _library = _librarySession.ActiveLibrary;
+            await ReloadAsync();
+        }
+        catch (Exception exception)
+        {
+            ShowLibraryError(exception);
+        }
+    }
+
+    private void OpenLibraryFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_librarySession.ActiveDirectoryPath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = _librarySession.ActiveDirectoryPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception exception)
+        {
+            ShowLibraryError(exception);
         }
     }
 
@@ -130,6 +233,22 @@ public partial class MainWindow : Window
 
         CountText.Text = $"{Lineups.Count} 个阵容";
         EmptyState.Visibility = Lineups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ActiveLibraryText.Text = _librarySession.ActiveDirectoryPath is null
+            ? string.Empty
+            : $"活动阵容库：{_librarySession.ActiveDirectoryPath}";
+    }
+
+    private void ShowLibraryError(Exception exception)
+    {
+        var message = exception is LineupLibraryException
+            ? exception.Message
+            : $"打开阵容库时发生错误：{exception.Message}";
+        MessageBox.Show(
+            this,
+            message,
+            "无法打开阵容库",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
 }

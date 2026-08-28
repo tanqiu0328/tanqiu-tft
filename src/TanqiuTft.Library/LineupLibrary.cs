@@ -24,16 +24,77 @@ public sealed class LineupLibrary
         }.ToString();
     }
 
+    public string DirectoryPath => _directoryPath;
+
+    public static async Task<LineupLibrary> OpenExistingAsync(
+        string directoryPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
+        var fullDirectoryPath = Path.GetFullPath(directoryPath);
+        var databasePath = Path.Combine(fullDirectoryPath, "library.db");
+        var imagesPath = Path.Combine(fullDirectoryPath, "images");
+
+        if (!Directory.Exists(fullDirectoryPath)
+            || !File.Exists(databasePath)
+            || !Directory.Exists(imagesPath))
+        {
+            throw InvalidLibrary();
+        }
+
+        var library = new LineupLibrary(fullDirectoryPath);
+        try
+        {
+            await using var connection = await library.OpenConnectionAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA table_info(lineups);";
+            var columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columnNames.Add(reader.GetString(1));
+            }
+
+            if (!columnNames.IsSupersetOf(["id", "name", "image_path", "created_at"]))
+            {
+                throw InvalidLibrary();
+            }
+
+            return library;
+        }
+        catch (LineupLibraryException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is SqliteException or IOException)
+        {
+            throw InvalidLibrary(exception);
+        }
+    }
+
     public static async Task<LineupLibrary> OpenAsync(
+        string directoryPath,
+        CancellationToken cancellationToken = default)
+    {
+        return await CreateAsync(directoryPath, cancellationToken);
+    }
+
+    public static async Task<LineupLibrary> CreateAsync(
         string directoryPath,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
 
-        Directory.CreateDirectory(directoryPath);
-        Directory.CreateDirectory(Path.Combine(directoryPath, "images"));
+        var fullDirectoryPath = Path.GetFullPath(directoryPath);
+        if (File.Exists(Path.Combine(fullDirectoryPath, "library.db")))
+        {
+            return await OpenExistingAsync(fullDirectoryPath, cancellationToken);
+        }
 
-        var library = new LineupLibrary(Path.GetFullPath(directoryPath));
+        Directory.CreateDirectory(fullDirectoryPath);
+        Directory.CreateDirectory(Path.Combine(fullDirectoryPath, "images"));
+
+        var library = new LineupLibrary(fullDirectoryPath);
         await using var connection = await library.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -167,5 +228,13 @@ public sealed class LineupLibrary
                 "仅支持可正常打开的 PNG 或 JPG/JPEG 图片",
                 exception);
         }
+    }
+
+    private static LineupLibraryException InvalidLibrary(Exception? innerException = null)
+    {
+        const string message = "所选目录不是有效的阵容库，请选择包含 library.db 和 images 文件夹的完整阵容库";
+        return innerException is null
+            ? new LineupLibraryException(message)
+            : new LineupLibraryException(message, innerException);
     }
 }

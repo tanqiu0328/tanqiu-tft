@@ -12,7 +12,7 @@ dotnet test TanqiuTft.sln
 dotnet run --project src/TanqiuTft.App/TanqiuTft.App.csproj
 ```
 
-首次启动会在用户文档目录的 `紫云院妙妙屋\阵容库` 中创建默认阵容库
+首次启动可在用户文档目录创建默认阵容库，或打开已有阵容库。应用会记住上次有效的活动阵容库，并支持从主窗口切换阵容库或打开其文件夹
 
 ## 发布
 

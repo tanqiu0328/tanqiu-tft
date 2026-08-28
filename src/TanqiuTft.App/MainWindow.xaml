@@ -25,16 +25,29 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel>
+                <StackPanel MaxWidth="560" HorizontalAlignment="Left">
                     <TextBlock Text="紫云院妙妙屋" FontSize="26" FontWeight="Bold" />
                     <TextBlock Margin="0,5,0,0"
                                Foreground="{StaticResource MutedTextBrush}"
                                Text="把值得复用的阵容一图流，安稳地留在本地" />
+                    <TextBlock x:Name="ActiveLibraryText"
+                               Margin="0,7,0,0"
+                               Foreground="{StaticResource MutedTextBrush}"
+                               TextTrimming="CharacterEllipsis" />
                 </StackPanel>
-                <Button Grid.Column="1"
-                        Style="{StaticResource PrimaryButton}"
-                        Click="ImportButton_Click"
-                        Content="＋  导入阵容" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Margin="0,0,10,0"
+                            Style="{StaticResource SecondaryButton}"
+                            Click="OpenLibraryFolderButton_Click"
+                            Content="打开文件夹" />
+                    <Button Margin="0,0,10,0"
+                            Style="{StaticResource SecondaryButton}"
+                            Click="SwitchLibraryButton_Click"
+                            Content="切换阵容库" />
+                    <Button Style="{StaticResource PrimaryButton}"
+                            Click="ImportButton_Click"
+                            Content="＋  导入阵容" />
+                </StackPanel>
             </Grid>
         </Border>
 
