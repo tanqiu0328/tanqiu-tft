@@ -104,6 +104,85 @@ public sealed class LineupLibraryTests : IDisposable
         Assert.Equal(ValidPng, lineups[1].ImageBytes);
     }
 
+    [Fact]
+    public async Task 新增阵容时定阵Tag去除首尾空格并忽略英文大小写去重()
+    {
+        Directory.CreateDirectory(_temporaryDirectory);
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
+        var libraryDirectory = Path.Combine(_temporaryDirectory, "library");
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
+        var library = await LineupLibrary.CreateAsync(libraryDirectory);
+
+        await library.AddAsync(
+            "护卫蛇",
+            sourceImagePath,
+            ["  护卫转  ", "Fast 8", "fast 8", "法师转", "法转"]);
+
+        var reopenedLibrary = await LineupLibrary.OpenExistingAsync(libraryDirectory);
+        var lineup = Assert.Single(await reopenedLibrary.GetLineupsAsync());
+
+        Assert.Equal(["护卫转", "Fast 8", "法师转", "法转"], lineup.Tags);
+    }
+
+    [Fact]
+    public async Task 修改阵容Tag后建议集合只保留仍被使用的Tag()
+    {
+        Directory.CreateDirectory(_temporaryDirectory);
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
+        var library = await LineupLibrary.CreateAsync(Path.Combine(_temporaryDirectory, "library"));
+        await library.AddAsync("旧阵容", sourceImagePath, ["护卫转", "Fast 8"]);
+
+        await library.UpdateAsync("旧阵容", "  新阵容  ", ["fast 8", "龙神转"]);
+
+        var lineup = Assert.Single(await library.GetLineupsAsync());
+        Assert.Equal("新阵容", lineup.Name);
+        Assert.Equal(["Fast 8", "龙神转"], lineup.Tags);
+        Assert.Equal(["Fast 8", "龙神转"], await library.GetTagSuggestionsAsync());
+    }
+
+    [Fact]
+    public async Task 统一搜索按名称完整名称包含和Tag包含分级并在同级按新到旧排列()
+    {
+        Directory.CreateDirectory(_temporaryDirectory);
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
+        var library = await LineupLibrary.CreateAsync(Path.Combine(_temporaryDirectory, "library"));
+        await library.AddAsync("护卫", sourceImagePath);
+        await Task.Delay(10);
+        await library.AddAsync("经典护卫蛇", sourceImagePath);
+        await Task.Delay(10);
+        await library.AddAsync("特色护卫蛇", sourceImagePath);
+        await Task.Delay(10);
+        await library.AddAsync("龙神九五", sourceImagePath, ["护卫转"]);
+        await Task.Delay(10);
+        await library.AddAsync("英文测试", sourceImagePath, ["FAST 8"]);
+
+        var chineseResults = await library.SearchAsync("护卫");
+        var englishResults = await library.SearchAsync("fast 8");
+
+        Assert.Equal(
+            ["护卫", "特色护卫蛇", "经典护卫蛇", "龙神九五"],
+            chineseResults.Select(lineup => lineup.Name));
+        Assert.Equal(["英文测试"], englishResults.Select(lineup => lineup.Name));
+    }
+
+    [Fact]
+    public async Task 点击Tag筛选时只返回持有该完整Tag的阵容()
+    {
+        Directory.CreateDirectory(_temporaryDirectory);
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
+        var library = await LineupLibrary.CreateAsync(Path.Combine(_temporaryDirectory, "library"));
+        await library.AddAsync("护卫转名称", sourceImagePath, ["其他"]);
+        await library.AddAsync("目标阵容", sourceImagePath, ["FAST 8"]);
+        await library.AddAsync("相似Tag阵容", sourceImagePath, ["Fast 8 进阶"]);
+
+        var results = await library.GetLineupsByTagAsync("fast 8");
+
+        Assert.Equal(["目标阵容"], results.Select(lineup => lineup.Name));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_temporaryDirectory))

@@ -2,4 +2,7 @@ using System.Windows.Media;
 
 namespace TanqiuTft.App;
 
-public sealed record LineupCardViewModel(string Name, ImageSource Image);
+public sealed record LineupCardViewModel(
+    string Name,
+    ImageSource Image,
+    IReadOnlyList<string> Tags);

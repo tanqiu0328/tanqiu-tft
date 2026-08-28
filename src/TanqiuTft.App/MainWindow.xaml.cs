@@ -10,6 +10,9 @@ namespace TanqiuTft.App;
 public partial class MainWindow : Window
 {
     private readonly LineupLibrarySession _librarySession = new();
+    private CancellationTokenSource? _reloadCancellation;
+    private bool _settingTagFilter;
+    private string? _selectedTag;
 
     public MainWindow()
     {
@@ -183,7 +186,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new ImportLineupDialog(imagePath) { Owner = this };
+        var tagSuggestions = await _librarySession.ActiveLibrary.GetTagSuggestionsAsync();
+        var dialog = new ImportLineupDialog(imagePath, tagSuggestions) { Owner = this };
         if (dialog.ShowDialog() != true)
         {
             return;
@@ -191,7 +195,10 @@ public partial class MainWindow : Window
 
         try
         {
-            await _librarySession.ActiveLibrary.AddAsync(dialog.LineupName, imagePath);
+            await _librarySession.ActiveLibrary.AddAsync(
+                dialog.LineupName,
+                imagePath,
+                dialog.LineupTags);
             await ReloadAsync();
         }
         catch (LineupLibraryException exception)
@@ -221,11 +228,31 @@ public partial class MainWindow : Window
             return;
         }
 
-        var lineups = await _librarySession.ActiveLibrary.GetLineupsAsync();
+        _reloadCancellation?.Cancel();
+        _reloadCancellation?.Dispose();
+        _reloadCancellation = new CancellationTokenSource();
+        var cancellationToken = _reloadCancellation.Token;
+
+        IReadOnlyList<Lineup> lineups;
+        try
+        {
+            lineups = _selectedTag is null
+                ? await _librarySession.ActiveLibrary.SearchAsync(SearchTextBox.Text, cancellationToken)
+                : await _librarySession.ActiveLibrary.GetLineupsByTagAsync(_selectedTag, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
         Lineups.Clear();
         foreach (var lineup in lineups)
         {
-            Lineups.Add(new LineupCardViewModel(lineup.Name, BitmapImageLoader.Load(lineup.ImageBytes)));
+            Lineups.Add(new LineupCardViewModel(
+                lineup.Name,
+                BitmapImageLoader.Load(lineup.ImageBytes),
+                lineup.Tags));
         }
 
         CountText.Text = $"{Lineups.Count} 个阵容";
@@ -233,6 +260,73 @@ public partial class MainWindow : Window
         ActiveLibraryText.Text = _librarySession.ActiveDirectoryPath is null
             ? string.Empty
             : $"活动阵容库：{_librarySession.ActiveDirectoryPath}";
+    }
+
+    private async void SearchTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (_settingTagFilter || _librarySession.ActiveLibrary is null)
+        {
+            return;
+        }
+
+        _selectedTag = null;
+        await ReloadAsync();
+    }
+
+    private async void LineupTagButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Content: string tag })
+        {
+            return;
+        }
+
+        _settingTagFilter = true;
+        SearchTextBox.Text = tag;
+        SearchTextBox.CaretIndex = SearchTextBox.Text.Length;
+        _settingTagFilter = false;
+        _selectedTag = tag;
+        await ReloadAsync();
+    }
+
+    private async void EditLineupButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_librarySession.ActiveLibrary is null
+            || sender is not System.Windows.Controls.Button { Tag: LineupCardViewModel lineup })
+        {
+            return;
+        }
+
+        var suggestions = await _librarySession.ActiveLibrary.GetTagSuggestionsAsync();
+        var dialog = new ImportLineupDialog(
+            lineup.Name,
+            lineup.Image,
+            lineup.Tags,
+            suggestions)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await _librarySession.ActiveLibrary.UpdateAsync(
+                lineup.Name,
+                dialog.LineupName,
+                dialog.LineupTags);
+            await ReloadAsync();
+        }
+        catch (LineupLibraryException exception)
+        {
+            MessageBox.Show(
+                this,
+                exception.Message,
+                "无法修改阵容",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
     }
 
     private void ShowLibraryError(Exception exception)

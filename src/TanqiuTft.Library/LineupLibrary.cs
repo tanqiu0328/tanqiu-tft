@@ -65,6 +65,8 @@ public sealed class LineupLibrary
                 throw InvalidLibrary();
             }
 
+            await EnsureTagSchemaAsync(connection, cancellationToken);
+
             return library;
         }
         catch (LineupLibraryException)
@@ -104,12 +106,14 @@ public sealed class LineupLibrary
             );
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureTagSchemaAsync(connection, cancellationToken);
         return library;
     }
 
     public async Task AddAsync(
         string name,
         string sourceImagePath,
+        IEnumerable<string>? tags = null,
         CancellationToken cancellationToken = default)
     {
         var normalizedName = name.Trim();
@@ -124,6 +128,7 @@ public sealed class LineupLibrary
         var relativeImagePath = Path.Combine("images", imageFileName);
         var internalImagePath = Path.Combine(_directoryPath, relativeImagePath);
         var createdAt = DateTimeOffset.UtcNow;
+        var normalizedTags = NormalizeTags(tags);
 
         var temporaryImagePath = $"{internalImagePath}.tmp";
 
@@ -133,16 +138,22 @@ public sealed class LineupLibrary
             File.Move(temporaryImagePath, internalImagePath);
 
             await using var connection = await OpenConnectionAsync(cancellationToken);
+            await using var transaction = connection.BeginTransaction();
             await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO lineups (id, name, image_path, created_at)
                 VALUES ($id, $name, $imagePath, $createdAt);
                 """;
-            command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+            var lineupId = Guid.NewGuid().ToString("N");
+            command.Parameters.AddWithValue("$id", lineupId);
             command.Parameters.AddWithValue("$name", normalizedName);
             command.Parameters.AddWithValue("$imagePath", relativeImagePath);
             command.Parameters.AddWithValue("$createdAt", createdAt.ToString("O"));
             await command.ExecuteNonQueryAsync(cancellationToken);
+
+            await SaveTagsAsync(connection, transaction, lineupId, normalizedTags, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
         {
@@ -158,29 +169,307 @@ public sealed class LineupLibrary
         }
     }
 
+    public Task AddAsync(
+        string name,
+        string sourceImagePath,
+        CancellationToken cancellationToken)
+    {
+        return AddAsync(name, sourceImagePath, tags: null, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<Lineup>> GetLineupsAsync(
         CancellationToken cancellationToken = default)
     {
-        var lineups = new List<Lineup>();
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT name, image_path, created_at
+            SELECT id, name, image_path, created_at
             FROM lineups
             ORDER BY created_at DESC;
             """;
 
+        var rows = await ReadLineupRowsAsync(command, cancellationToken);
+        return await LoadLineupsAsync(connection, rows, cancellationToken);
+    }
+
+    public async Task UpdateAsync(
+        string existingName,
+        string newName,
+        IEnumerable<string>? tags = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedName = newName.Trim();
+        if (normalizedName.Length == 0)
+        {
+            throw new LineupLibraryException("请输入阵容名称");
+        }
+
+        var normalizedTags = NormalizeTags(tags);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        try
+        {
+            string? lineupId;
+            await using (var findCommand = connection.CreateCommand())
+            {
+                findCommand.Transaction = transaction;
+                findCommand.CommandText = "SELECT id FROM lineups WHERE name = $name COLLATE NOCASE;";
+                findCommand.Parameters.AddWithValue("$name", existingName);
+                lineupId = (string?)await findCommand.ExecuteScalarAsync(cancellationToken);
+            }
+
+            if (lineupId is null)
+            {
+                throw new LineupLibraryException("找不到要修改的阵容");
+            }
+
+            await using (var updateCommand = connection.CreateCommand())
+            {
+                updateCommand.Transaction = transaction;
+                updateCommand.CommandText = "UPDATE lineups SET name = $name WHERE id = $id;";
+                updateCommand.Parameters.AddWithValue("$name", normalizedName);
+                updateCommand.Parameters.AddWithValue("$id", lineupId);
+                await updateCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var deleteCommand = connection.CreateCommand())
+            {
+                deleteCommand.Transaction = transaction;
+                deleteCommand.CommandText = "DELETE FROM lineup_tags WHERE lineup_id = $lineupId;";
+                deleteCommand.Parameters.AddWithValue("$lineupId", lineupId);
+                await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await SaveTagsAsync(connection, transaction, lineupId, normalizedTags, cancellationToken);
+            await using (var cleanupCommand = connection.CreateCommand())
+            {
+                cleanupCommand.Transaction = transaction;
+                cleanupCommand.CommandText = "DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM lineup_tags);";
+                await cleanupCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
+        {
+            throw new LineupLibraryException("阵容名称已存在，请换一个名称", exception);
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> GetTagSuggestionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var tags = new List<string>();
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT tags.name
+            FROM tags
+            WHERE EXISTS (
+                SELECT 1 FROM lineup_tags WHERE lineup_tags.tag_id = tags.id
+            )
+            ORDER BY tags.name COLLATE NOCASE;
+            """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            var imagePath = Path.Combine(_directoryPath, reader.GetString(1));
-            lineups.Add(new Lineup(
+            tags.Add(reader.GetString(0));
+        }
+
+        return tags;
+    }
+
+    public async Task<IReadOnlyList<Lineup>> SearchAsync(
+        string query,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedQuery = query.Trim();
+        if (normalizedQuery.Length == 0)
+        {
+            return await GetLineupsAsync(cancellationToken);
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT lineups.id, lineups.name, lineups.image_path, lineups.created_at
+            FROM lineups
+            WHERE instr(lower(lineups.name), lower($query)) > 0
+               OR EXISTS (
+                    SELECT 1
+                    FROM lineup_tags
+                    INNER JOIN tags ON tags.id = lineup_tags.tag_id
+                    WHERE lineup_tags.lineup_id = lineups.id
+                      AND instr(lower(tags.name), lower($query)) > 0
+               )
+            ORDER BY CASE
+                        WHEN lineups.name = $query COLLATE NOCASE THEN 0
+                        WHEN instr(lower(lineups.name), lower($query)) > 0 THEN 1
+                        ELSE 2
+                     END,
+                     lineups.created_at DESC;
+            """;
+        command.Parameters.AddWithValue("$query", normalizedQuery);
+        var rows = await ReadLineupRowsAsync(command, cancellationToken);
+        return await LoadLineupsAsync(connection, rows, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Lineup>> GetLineupsByTagAsync(
+        string tag,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedTag = tag.Trim();
+        if (normalizedTag.Length == 0)
+        {
+            return [];
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT lineups.id, lineups.name, lineups.image_path, lineups.created_at
+            FROM lineups
+            WHERE EXISTS (
+                SELECT 1
+                FROM lineup_tags
+                INNER JOIN tags ON tags.id = lineup_tags.tag_id
+                WHERE lineup_tags.lineup_id = lineups.id
+                  AND tags.name = $tag COLLATE NOCASE
+            )
+            ORDER BY lineups.created_at DESC;
+            """;
+        command.Parameters.AddWithValue("$tag", normalizedTag);
+        var rows = await ReadLineupRowsAsync(command, cancellationToken);
+        return await LoadLineupsAsync(connection, rows, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<LineupRow>> ReadLineupRowsAsync(
+        SqliteCommand command,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<LineupRow>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(new LineupRow(
                 reader.GetString(0),
-                await File.ReadAllBytesAsync(imagePath, cancellationToken),
-                DateTimeOffset.Parse(reader.GetString(2))));
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3)));
+        }
+
+        return rows;
+    }
+
+    private async Task<IReadOnlyList<Lineup>> LoadLineupsAsync(
+        SqliteConnection connection,
+        IReadOnlyList<LineupRow> rows,
+        CancellationToken cancellationToken)
+    {
+        var lineups = new List<Lineup>(rows.Count);
+        foreach (var row in rows)
+        {
+            lineups.Add(new Lineup(
+                row.Name,
+                await File.ReadAllBytesAsync(
+                    Path.Combine(_directoryPath, row.ImagePath),
+                    cancellationToken),
+                DateTimeOffset.Parse(row.CreatedAt),
+                await GetTagsAsync(connection, row.Id, cancellationToken)));
         }
 
         return lineups;
+    }
+
+    private sealed record LineupRow(string Id, string Name, string ImagePath, string CreatedAt);
+
+    private static IReadOnlyList<string> NormalizeTags(IEnumerable<string>? tags)
+    {
+        if (tags is null)
+        {
+            return [];
+        }
+
+        var normalizedTags = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tag in tags)
+        {
+            var normalizedTag = tag.Trim();
+            if (normalizedTag.Length > 0 && seen.Add(normalizedTag))
+            {
+                normalizedTags.Add(normalizedTag);
+            }
+        }
+
+        return normalizedTags;
+    }
+
+    private static async Task EnsureTagSchemaAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS lineup_tags (
+                lineup_id TEXT NOT NULL REFERENCES lineups(id) ON DELETE CASCADE,
+                tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (lineup_id, tag_id)
+            );
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task SaveTagsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string lineupId,
+        IReadOnlyList<string> tags,
+        CancellationToken cancellationToken)
+    {
+        for (var position = 0; position < tags.Count; position++)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO tags (name) VALUES ($name)
+                ON CONFLICT(name) DO NOTHING;
+                INSERT INTO lineup_tags (lineup_id, tag_id, position)
+                SELECT $lineupId, id, $position FROM tags WHERE name = $name COLLATE NOCASE;
+                """;
+            command.Parameters.AddWithValue("$name", tags[position]);
+            command.Parameters.AddWithValue("$lineupId", lineupId);
+            command.Parameters.AddWithValue("$position", position);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static async Task<IReadOnlyList<string>> GetTagsAsync(
+        SqliteConnection connection,
+        string lineupId,
+        CancellationToken cancellationToken)
+    {
+        var tags = new List<string>();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT tags.name
+            FROM lineup_tags
+            INNER JOIN tags ON tags.id = lineup_tags.tag_id
+            WHERE lineup_tags.lineup_id = $lineupId
+            ORDER BY lineup_tags.position;
+            """;
+        command.Parameters.AddWithValue("$lineupId", lineupId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            tags.Add(reader.GetString(0));
+        }
+
+        return tags;
     }
 
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)

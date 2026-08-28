@@ -57,8 +57,27 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <Grid Grid.Row="0" Margin="0,0,0,18">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
                 <TextBlock Text="我的阵容" FontSize="19" FontWeight="SemiBold" />
+                <TextBox x:Name="SearchTextBox"
+                         Grid.Column="1"
+                         Width="420"
+                         Margin="28,0"
+                         Padding="13,9"
+                         HorizontalAlignment="Center"
+                         VerticalContentAlignment="Center"
+                         Foreground="{StaticResource TextBrush}"
+                         Background="{StaticResource SurfaceRaisedBrush}"
+                         BorderBrush="{StaticResource BorderBrush}"
+                         CaretBrush="{StaticResource TextBrush}"
+                         ToolTip="按阵容名称或定阵 Tag 搜索"
+                         TextChanged="SearchTextBox_TextChanged" />
                 <TextBlock x:Name="CountText"
+                           Grid.Column="2"
                            HorizontalAlignment="Right"
                            VerticalAlignment="Center"
                            Foreground="{StaticResource MutedTextBrush}" />
@@ -92,6 +111,29 @@
                                                FontWeight="SemiBold"
                                                Text="{Binding Name}"
                                                TextWrapping="Wrap" />
+                                    <ItemsControl Margin="4,8,4,0" ItemsSource="{Binding Tags}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Margin="0,0,7,7"
+                                                        Padding="8,4"
+                                                        Style="{StaticResource SecondaryButton}"
+                                                        Click="LineupTagButton_Click"
+                                                        Content="{Binding}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <Button Margin="4,7,4,1"
+                                            HorizontalAlignment="Right"
+                                            Padding="12,6"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Tag="{Binding}"
+                                            Click="EditLineupButton_Click"
+                                            Content="修改" />
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
