@@ -111,6 +111,76 @@ public sealed class LineupLibrarySessionTests : IDisposable
         Assert.Contains("不是有效的阵容库", exception.Message);
     }
 
+    [Theory]
+    [InlineData("CREATE UNIQUE INDEX partial_name ON lineups(name) WHERE id <> '';")]
+    [InlineData("CREATE UNIQUE INDEX expression_name ON lineups(name, lower(id));")]
+    public async Task 打开无法保证所有阵容名称唯一的数据库时显示中文错误(string indexSql)
+    {
+        var invalidDirectory = Path.Combine(_temporaryDirectory, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(invalidDirectory, "images"));
+        var databasePath = Path.Combine(invalidDirectory, "library.db");
+        await ExecuteNonQueryAsync(
+            databasePath,
+            $$"""
+            CREATE TABLE lineups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE,
+                image_path TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            {{indexSql}}
+            """);
+
+        await Assert.ThrowsAsync<LineupLibraryException>(
+            () => LineupLibrary.OpenExistingAsync(invalidDirectory));
+    }
+
+    [Fact]
+    public async Task 打开包含损坏内部图片的目录时保持当前活动阵容库不变()
+    {
+        var settingsPath = Path.Combine(_temporaryDirectory, "settings", "active-library.txt");
+        var validDirectory = Path.Combine(_temporaryDirectory, "valid-library");
+        var invalidDirectory = Path.Combine(_temporaryDirectory, "broken-image-library");
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
+        Directory.CreateDirectory(_temporaryDirectory);
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
+        var session = new LineupLibrarySession(settingsPath);
+        await session.CreateAndActivateAsync(validDirectory);
+        var invalidLibrary = await LineupLibrary.CreateAsync(invalidDirectory);
+        await invalidLibrary.AddAsync("损坏阵容", sourceImagePath);
+        var internalImagePath = Assert.Single(Directory.EnumerateFiles(
+            Path.Combine(invalidDirectory, "images")));
+        await File.WriteAllTextAsync(internalImagePath, "这不是图片");
+
+        await Assert.ThrowsAsync<LineupLibraryException>(
+            () => session.OpenAndActivateAsync(invalidDirectory));
+
+        Assert.Equal(Path.GetFullPath(validDirectory), session.ActiveDirectoryPath);
+    }
+
+    [Fact]
+    public async Task 打开包含非法创建时间的目录时保持当前活动阵容库不变()
+    {
+        var settingsPath = Path.Combine(_temporaryDirectory, "settings", "active-library.txt");
+        var validDirectory = Path.Combine(_temporaryDirectory, "valid-library");
+        var invalidDirectory = Path.Combine(_temporaryDirectory, "invalid-time-library");
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
+        Directory.CreateDirectory(_temporaryDirectory);
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
+        var session = new LineupLibrarySession(settingsPath);
+        await session.CreateAndActivateAsync(validDirectory);
+        var invalidLibrary = await LineupLibrary.CreateAsync(invalidDirectory);
+        await invalidLibrary.AddAsync("时间错误阵容", sourceImagePath);
+        await ExecuteNonQueryAsync(
+            Path.Combine(invalidDirectory, "library.db"),
+            "UPDATE lineups SET created_at = '不是时间';");
+
+        await Assert.ThrowsAsync<LineupLibraryException>(
+            () => session.OpenAndActivateAsync(invalidDirectory));
+
+        Assert.Equal(Path.GetFullPath(validDirectory), session.ActiveDirectoryPath);
+    }
+
     [Fact]
     public async Task 切换阵容库时只显示目标阵容库的数据而不合并()
     {

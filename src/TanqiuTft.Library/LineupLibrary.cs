@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Windows.Media.Imaging;
 using Microsoft.Data.Sqlite;
@@ -59,7 +60,7 @@ public sealed class LineupLibrary
 
             if (!columnNames.IsSupersetOf(["id", "name", "image_path", "created_at"])
                 || !await HasValidNameIndexAsync(connection, cancellationToken)
-                || !await HasValidImagePathsAsync(connection, fullDirectoryPath, cancellationToken))
+                || !await HasValidLineupsAsync(connection, fullDirectoryPath, cancellationToken))
             {
                 throw InvalidLibrary();
             }
@@ -246,7 +247,7 @@ public sealed class LineupLibrary
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
-                if (reader.GetInt32(2) == 1)
+                if (reader.GetInt32(2) == 1 && reader.GetInt32(4) == 0)
                 {
                     uniqueIndexNames.Add(reader.GetString(1));
                 }
@@ -255,19 +256,23 @@ public sealed class LineupLibrary
 
         foreach (var indexName in uniqueIndexNames)
         {
-            var keyColumns = new List<(string Name, string Collation)>();
+            var keyColumns = new List<(string? Name, string Collation)>();
             await using var command = connection.CreateCommand();
             command.CommandText = $"PRAGMA index_xinfo([{indexName.Replace("]", "]]", StringComparison.Ordinal)}]);";
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
-                if (reader.GetInt32(5) == 1 && !reader.IsDBNull(2))
+                if (reader.GetInt32(5) == 1)
                 {
-                    keyColumns.Add((reader.GetString(2), reader.GetString(4)));
+                    keyColumns.Add((
+                        reader.IsDBNull(2) ? null : reader.GetString(2),
+                        reader.GetString(4)));
                 }
             }
 
-            if (keyColumns is [{ Name: "name", Collation: "NOCASE" }])
+            if (keyColumns.Count == 1
+                && string.Equals(keyColumns[0].Name, "name", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(keyColumns[0].Collation, "NOCASE", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -276,19 +281,27 @@ public sealed class LineupLibrary
         return false;
     }
 
-    private static async Task<bool> HasValidImagePathsAsync(
+    private static async Task<bool> HasValidLineupsAsync(
         SqliteConnection connection,
         string libraryDirectoryPath,
         CancellationToken cancellationToken)
     {
         var imagesDirectoryPath = Path.GetFullPath(Path.Combine(libraryDirectoryPath, "images"));
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT image_path FROM lineups;";
+        command.CommandText = "SELECT name, image_path, created_at FROM lineups;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            var storedPath = reader.GetString(0);
-            if (Path.IsPathRooted(storedPath))
+            var name = reader.GetString(0);
+            var storedPath = reader.GetString(1);
+            var createdAt = reader.GetString(2);
+            if (string.IsNullOrWhiteSpace(name)
+                || !DateTimeOffset.TryParse(
+                    createdAt,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out _)
+                || Path.IsPathRooted(storedPath))
             {
                 return false;
             }
@@ -311,6 +324,16 @@ public sealed class LineupLibrary
                 || pathWithinImages.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 || Path.IsPathRooted(pathWithinImages)
                 || !File.Exists(fullImagePath))
+            {
+                return false;
+            }
+
+            try
+            {
+                var imageBytes = await File.ReadAllBytesAsync(fullImagePath, cancellationToken);
+                ValidateImage(imageBytes, fullImagePath);
+            }
+            catch (Exception exception) when (exception is IOException or LineupLibraryException)
             {
                 return false;
             }
