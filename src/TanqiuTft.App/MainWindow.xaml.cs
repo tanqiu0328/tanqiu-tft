@@ -10,7 +10,6 @@ namespace TanqiuTft.App;
 public partial class MainWindow : Window
 {
     private readonly LineupLibrarySession _librarySession = new();
-    private LineupLibrary? _library;
 
     public MainWindow()
     {
@@ -30,7 +29,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _library = _librarySession.ActiveLibrary;
             await ReloadAsync();
         }
         catch (Exception exception)
@@ -109,7 +107,6 @@ public partial class MainWindow : Window
         try
         {
             await _librarySession.OpenAndActivateAsync(folderDialog.FolderName);
-            _library = _librarySession.ActiveLibrary;
             await ReloadAsync();
         }
         catch (Exception exception)
@@ -181,7 +178,7 @@ public partial class MainWindow : Window
 
     private async Task ImportAsync(string imagePath)
     {
-        if (_library is null)
+        if (_librarySession.ActiveLibrary is null)
         {
             return;
         }
@@ -194,7 +191,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await _library.AddAsync(dialog.LineupName, imagePath);
+            await _librarySession.ActiveLibrary.AddAsync(dialog.LineupName, imagePath);
             await ReloadAsync();
         }
         catch (LineupLibraryException exception)
@@ -219,12 +216,12 @@ public partial class MainWindow : Window
 
     private async Task ReloadAsync()
     {
-        if (_library is null)
+        if (_librarySession.ActiveLibrary is null)
         {
             return;
         }
 
-        var lineups = await _library.GetLineupsAsync();
+        var lineups = await _librarySession.ActiveLibrary.GetLineupsAsync();
         Lineups.Clear();
         foreach (var lineup in lineups)
         {

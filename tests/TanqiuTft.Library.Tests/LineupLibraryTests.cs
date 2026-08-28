@@ -21,12 +21,12 @@ public sealed class LineupLibraryTests : IDisposable
         var libraryDirectory = Path.Combine(_temporaryDirectory, "library");
         await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
 
-        var library = await LineupLibrary.OpenAsync(libraryDirectory);
+        var library = await LineupLibrary.CreateAsync(libraryDirectory);
         await library.AddAsync("  测试阵容  ", sourceImagePath);
 
         File.Delete(sourceImagePath);
 
-        var reopenedLibrary = await LineupLibrary.OpenAsync(libraryDirectory);
+        var reopenedLibrary = await LineupLibrary.OpenExistingAsync(libraryDirectory);
         var lineup = Assert.Single(await reopenedLibrary.GetLineupsAsync());
 
         Assert.Equal("测试阵容", lineup.Name);
@@ -40,7 +40,7 @@ public sealed class LineupLibraryTests : IDisposable
         var sourceImagePath = Path.Combine(_temporaryDirectory, "fake.png");
         var libraryDirectory = Path.Combine(_temporaryDirectory, "library");
         await File.WriteAllTextAsync(sourceImagePath, "这不是图片");
-        var library = await LineupLibrary.OpenAsync(libraryDirectory);
+        var library = await LineupLibrary.CreateAsync(libraryDirectory);
 
         var exception = await Assert.ThrowsAsync<LineupLibraryException>(
             () => library.AddAsync("无效阵容", sourceImagePath));
@@ -56,7 +56,7 @@ public sealed class LineupLibraryTests : IDisposable
         Directory.CreateDirectory(_temporaryDirectory);
         var sourceImagePath = Path.Combine(_temporaryDirectory, "broken.png");
         await File.WriteAllBytesAsync(sourceImagePath, ValidPng[..20]);
-        var library = await LineupLibrary.OpenAsync(Path.Combine(_temporaryDirectory, "library"));
+        var library = await LineupLibrary.CreateAsync(Path.Combine(_temporaryDirectory, "library"));
 
         var exception = await Assert.ThrowsAsync<LineupLibraryException>(
             () => library.AddAsync("损坏图片", sourceImagePath));
@@ -71,7 +71,7 @@ public sealed class LineupLibraryTests : IDisposable
         var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
         var libraryDirectory = Path.Combine(_temporaryDirectory, "library");
         await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
-        var library = await LineupLibrary.OpenAsync(libraryDirectory);
+        var library = await LineupLibrary.CreateAsync(libraryDirectory);
         await library.AddAsync("Fast 8", sourceImagePath);
 
         var exception = await Assert.ThrowsAsync<LineupLibraryException>(
@@ -91,7 +91,7 @@ public sealed class LineupLibraryTests : IDisposable
         var jpegBytes = CreateJpeg();
         await File.WriteAllBytesAsync(pngPath, ValidPng);
         await File.WriteAllBytesAsync(jpegPath, jpegBytes);
-        var library = await LineupLibrary.OpenAsync(
+        var library = await LineupLibrary.CreateAsync(
             Path.Combine(_temporaryDirectory, "library"));
 
         await library.AddAsync("较早阵容", pngPath);

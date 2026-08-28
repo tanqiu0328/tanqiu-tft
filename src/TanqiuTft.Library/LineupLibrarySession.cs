@@ -22,7 +22,7 @@ public sealed class LineupLibrarySession
 
     public LineupLibrary? ActiveLibrary { get; private set; }
 
-    public string? ActiveDirectoryPath { get; private set; }
+    public string? ActiveDirectoryPath => ActiveLibrary?.DirectoryPath;
 
     public async Task CreateAndActivateAsync(
         string directoryPath,
@@ -49,7 +49,6 @@ public sealed class LineupLibrarySession
         {
             var library = await LineupLibrary.OpenExistingAsync(directoryPath, cancellationToken);
             ActiveLibrary = library;
-            ActiveDirectoryPath = library.DirectoryPath;
             return true;
         }
         catch (LineupLibraryException)
@@ -75,6 +74,5 @@ public sealed class LineupLibrarySession
         Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
         await File.WriteAllTextAsync(_settingsPath, fullDirectoryPath, cancellationToken);
         ActiveLibrary = library;
-        ActiveDirectoryPath = fullDirectoryPath;
     }
 }

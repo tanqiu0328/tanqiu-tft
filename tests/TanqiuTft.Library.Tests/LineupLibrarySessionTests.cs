@@ -1,4 +1,5 @@
 using System.IO;
+using Microsoft.Data.Sqlite;
 using TanqiuTft.Library;
 
 namespace TanqiuTft.Library.Tests;
@@ -62,6 +63,55 @@ public sealed class LineupLibrarySessionTests : IDisposable
     }
 
     [Fact]
+    public async Task 打开记录绝对图片路径的目录时保持当前活动阵容库不变()
+    {
+        var settingsPath = Path.Combine(_temporaryDirectory, "settings", "active-library.txt");
+        var validDirectory = Path.Combine(_temporaryDirectory, "valid-library");
+        var invalidDirectory = Path.Combine(_temporaryDirectory, "absolute-path-library");
+        var sourceImagePath = Path.Combine(_temporaryDirectory, "source.png");
+        Directory.CreateDirectory(_temporaryDirectory);
+        await File.WriteAllBytesAsync(sourceImagePath, ValidPng);
+        var session = new LineupLibrarySession(settingsPath);
+        await session.CreateAndActivateAsync(validDirectory);
+        var invalidLibrary = await LineupLibrary.CreateAsync(invalidDirectory);
+        await invalidLibrary.AddAsync("越界阵容", sourceImagePath);
+        await ExecuteNonQueryAsync(
+            Path.Combine(invalidDirectory, "library.db"),
+            "UPDATE lineups SET image_path = $imagePath;",
+            sourceImagePath);
+
+        var exception = await Assert.ThrowsAsync<LineupLibraryException>(
+            () => session.OpenAndActivateAsync(invalidDirectory));
+
+        Assert.Contains("不是有效的阵容库", exception.Message);
+        Assert.Equal(Path.GetFullPath(validDirectory), session.ActiveDirectoryPath);
+        Assert.Equal(Path.GetFullPath(validDirectory), await File.ReadAllTextAsync(settingsPath));
+    }
+
+    [Fact]
+    public async Task 打开缺少阵容名称唯一约束的数据库时显示中文错误()
+    {
+        var invalidDirectory = Path.Combine(_temporaryDirectory, "no-unique-library");
+        Directory.CreateDirectory(Path.Combine(invalidDirectory, "images"));
+        var databasePath = Path.Combine(invalidDirectory, "library.db");
+        await ExecuteNonQueryAsync(
+            databasePath,
+            """
+            CREATE TABLE lineups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE,
+                image_path TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """);
+
+        var exception = await Assert.ThrowsAsync<LineupLibraryException>(
+            () => LineupLibrary.OpenExistingAsync(invalidDirectory));
+
+        Assert.Contains("不是有效的阵容库", exception.Message);
+    }
+
+    [Fact]
     public async Task 切换阵容库时只显示目标阵容库的数据而不合并()
     {
         var settingsPath = Path.Combine(_temporaryDirectory, "settings", "active-library.txt");
@@ -91,7 +141,7 @@ public sealed class LineupLibrarySessionTests : IDisposable
         var imagePath = Path.Combine(_temporaryDirectory, "source.png");
         Directory.CreateDirectory(_temporaryDirectory);
         await File.WriteAllBytesAsync(imagePath, ValidPng);
-        var original = await LineupLibrary.OpenAsync(originalDirectory);
+        var original = await LineupLibrary.CreateAsync(originalDirectory);
         await original.AddAsync("可移动阵容", imagePath);
 
         CopyDirectory(originalDirectory, copiedDirectory);
@@ -126,5 +176,22 @@ public sealed class LineupLibrarySessionTests : IDisposable
                 childDirectory,
                 Path.Combine(destinationDirectory, Path.GetFileName(childDirectory)));
         }
+    }
+
+    private static async Task ExecuteNonQueryAsync(
+        string databasePath,
+        string commandText,
+        string? imagePath = null)
+    {
+        await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = commandText;
+        if (imagePath is not null)
+        {
+            command.Parameters.AddWithValue("$imagePath", imagePath);
+        }
+
+        await command.ExecuteNonQueryAsync();
     }
 }
